@@ -1,6 +1,6 @@
 --[[
     AutoClicker  |  made by GR5
-    Cross-executor | High Performance | Toggle + Hold
+    Cross-executor | Anti-Detection | High PPS
 ]]
 
 -- ═══ GUARD ═══════════════════════════════════════════════
@@ -19,7 +19,6 @@ local ok, Svc = pcall(function()
         Lighting = game:GetService("Lighting"),
         CoreGui  = game:GetService("CoreGui"),
         TS       = game:GetService("TeleportService"),
-        VU       = game:GetService("VirtualUser"),
     }
 end)
 if not ok then warn("[GR5] Service error"); return end
@@ -46,10 +45,30 @@ local function tw(obj, t, props, style)
     end)
 end
 
+-- ═══ CLICK ENGINE (VirtualUser YOK) ══════════════════════
+-- Executor'ün desteklediği en iyi metodu otomatik seçer
+local clickFn = nil
+
+if type(mouse1click) == "function" then
+    clickFn = function() mouse1click() end
+elseif type(mouse1press) == "function" and type(mouse1release) == "function" then
+    clickFn = function() mouse1press(); mouse1release() end
+elseif type(Input) == "table" and type(Input.SendMouseEvent) == "function" then
+    clickFn = function()
+        Input.SendMouseEvent(0, 0, 0, 0, workspace.CurrentCamera)
+        Input.SendMouseEvent(0, 0, 0, 0, workspace.CurrentCamera)
+    end
+else
+    -- Son çare: UserInputService simülasyonu
+    clickFn = function()
+        local args = {Enum.UserInputType.MouseButton1, false}
+        pcall(function() Svc.UIS:SendEvent(Enum.UserInputType.MouseButton1, Enum.KeyCode.Unknown, 0, 0, false) end)
+    end
+end
+
 -- ═══ STATE ════════════════════════════════════════════════
 local pps         = 20
 local isOn        = false
-local holdActive  = false   -- F tuşu hold ile aktif
 local realCPS     = 0
 local totalClicks = 0
 local hotkey      = Enum.KeyCode.F
@@ -59,46 +78,24 @@ local gfxOn       = false
 local savedSky    = {}
 local savedS, savedB, savedF
 
--- ═══ CLICK ENGINE ════════════════════════════════════════
--- Executor tespiti (1 kez yap)
-local HAS_M1  = type(mouse1click)   == "function"
-local HAS_M1P = type(mouse1press)   == "function"
-local HAS_M1R = type(mouse1release) == "function"
-
--- VU'yu 1 kez hazırla
-local vuReady = false
-local function prepareVU()
-    if vuReady then return end
-    pcall(function() Svc.VU:CaptureController() end)
-    vuReady = true
-end
-
 local function doClick()
-    pcall(function()
-        if HAS_M1 then
-            mouse1click()
-        elseif HAS_M1P and HAS_M1R then
-            mouse1press(); mouse1release()
-        else
-            Svc.VU:ClickButton1(Vector2.new())
-        end
-    end)
+    pcall(clickFn)
     totalClicks = totalClicks + 1
 end
 
--- ═══ LOOP ════════════════════════════════════════════════
+-- ═══ LOOP (Heartbeat tabanlı, hafif random) ══════════════
 local acc = 0
 local function startLoop()
     if loopConn then pcall(function() loopConn:Disconnect() end); loopConn = nil end
-    prepareVU()
     acc = 0
     local t0  = tick()
     local cnt = 0
     loopConn = Svc.RS.Heartbeat:Connect(function(dt)
         if not isOn then return end
-        acc = acc + pps * dt
-        -- max 50 tıklama/frame — yüksek PPS'de donmayı önler
-        local n = math.min(math.floor(acc), 50)
+        -- Hafif rastgelelik → anti-cheat'e daha insan gibi görünür
+        local jitter = pps * (1 + (math.random() - 0.5) * 0.05)
+        acc = acc + jitter * dt
+        local n = math.min(math.floor(acc), 60)
         if n < 1 then return end
         acc = acc - n
         for i = 1, n do doClick() end
@@ -112,9 +109,7 @@ end
 local function stopLoop()
     isOn = false
     if loopConn then pcall(function() loopConn:Disconnect() end); loopConn = nil end
-    vuReady = false
-    realCPS = 0
-    acc = 0
+    realCPS = 0; acc = 0
 end
 
 -- ═══ LOW GFX ═════════════════════════════════════════════
@@ -154,7 +149,7 @@ local function restoreLow()
 end
 
 -- ═══ GUI ═════════════════════════════════════════════════
-local FULL_H = 260; local MINI_H = 28; local minimized = false
+local FULL_H = 230; local MINI_H = 28; local minimized = false
 local BG = Instance.new("Frame", G)
 BG.Size     = UDim2.new(0, 300, 0, FULL_H)
 BG.Position = UDim2.new(0.5, -150, 0.3, 0)
@@ -188,7 +183,7 @@ local hBtn = Instance.new("TextButton", HDR)
 hBtn.Size = UDim2.new(1, 0, 1, 0); hBtn.BackgroundTransparency = 1
 hBtn.Text = ""; hBtn.ZIndex = 13; hBtn.AutoButtonColor = false
 
--- Drag sistemi
+-- Drag
 local dr = false; local ds = Vector2.zero; local dp2 = BG.Position; local dD = 0
 hBtn.InputBegan:Connect(function(i)
     if i.UserInputType == Enum.UserInputType.MouseButton1 then
@@ -228,6 +223,7 @@ end
 -- PPS kontrolleri
 local btnP = mkB("[+]", 8, 34, 34, 24, Color3.fromRGB(0, 35, 15), Color3.fromRGB(0, 220, 100))
 local btnM = mkB("[-]", 46, 34, 34, 24, Color3.fromRGB(35, 10, 10), Color3.fromRGB(220, 80, 80))
+
 local ppsBox = Instance.new("TextBox", BG)
 ppsBox.Size = UDim2.new(0, 72, 0, 24); ppsBox.Position = UDim2.new(0, 85, 0, 34)
 ppsBox.BackgroundColor3 = Color3.fromRGB(20, 20, 30); ppsBox.BorderSizePixel = 0; ppsBox.ZIndex = 12
@@ -281,53 +277,15 @@ btnM.MouseButton1Click:Connect(function() pps = math.max(pps - 5, 1); ppsBox.Tex
 btnP.MouseButton1Down:Connect(function() holdCh(5) end)
 btnM.MouseButton1Down:Connect(function() holdCh(-5) end)
 
--- ═══ START BUTONU (Toggle) ════════════════════════════════
-local startBtn = Instance.new("TextButton", BG)
-startBtn.Size = UDim2.new(1, -12, 0, 32); startBtn.Position = UDim2.new(0, 6, 0, 80)
-startBtn.BackgroundColor3 = Color3.fromRGB(0, 60, 20); startBtn.BorderSizePixel = 0
-startBtn.ZIndex = 12; startBtn.AutoButtonColor = false
-startBtn.Text = "▶  START"; startBtn.Font = Enum.Font.GothamBold; startBtn.TextSize = 16
-startBtn.TextColor3 = Color3.fromRGB(60, 255, 120)
-Instance.new("UICorner", startBtn).CornerRadius = UDim.new(0, 6)
-local startSt = Instance.new("UIStroke", startBtn); startSt.Color = Color3.fromRGB(0, 120, 40); startSt.Thickness = 1.5
-
-local function setOn()
-    isOn = true; startLoop()
-    startBtn.Text = "⏹  STOP"
-    startBtn.TextColor3 = Color3.fromRGB(255, 80, 80)
-    tw(startBtn, 0.2, {BackgroundColor3 = Color3.fromRGB(60, 10, 10)})
-    tw(startSt, 0.2, {Color = Color3.fromRGB(180, 0, 0)})
-    tw(bgSt, 0.15, {Color = Color3.fromRGB(0, 200, 80)})
-end
-
-local function setOff()
-    isOn = false; stopLoop()
-    startBtn.Text = "▶  START"
-    startBtn.TextColor3 = Color3.fromRGB(60, 255, 120)
-    tw(startBtn, 0.2, {BackgroundColor3 = Color3.fromRGB(0, 60, 20)})
-    tw(startSt, 0.2, {Color = Color3.fromRGB(0, 120, 40)})
-    tw(bgSt, 0.15, {Color = Color3.fromRGB(50, 50, 70)})
-end
-
-startBtn.MouseButton1Click:Connect(function()
-    if isOn and not holdActive then setOff() else if not isOn then setOn() end end
-end)
-startBtn.MouseEnter:Connect(function()
-    if not isOn then tw(startBtn, 0.1, {BackgroundColor3 = Color3.fromRGB(0, 90, 30)}) end
-end)
-startBtn.MouseLeave:Connect(function()
-    if not isOn then tw(startBtn, 0.1, {BackgroundColor3 = Color3.fromRGB(0, 60, 20)}) end
-end)
-
 -- ═══ HOLD KEY SEÇİCİ ═════════════════════════════════════
 local kTopL = Instance.new("TextLabel", BG)
-kTopL.Size = UDim2.new(0, 100, 0, 16); kTopL.Position = UDim2.new(0, 6, 0, 124)
+kTopL.Size = UDim2.new(0, 100, 0, 16); kTopL.Position = UDim2.new(0, 6, 0, 88)
 kTopL.BackgroundTransparency = 1; kTopL.Text = "Hold Key:"
 kTopL.Font = Enum.Font.Code; kTopL.TextSize = 12
 kTopL.TextColor3 = Color3.fromRGB(90, 90, 130); kTopL.ZIndex = 12; kTopL.TextXAlignment = Enum.TextXAlignment.Left
 
 local keyBtn = Instance.new("TextButton", BG)
-keyBtn.Size = UDim2.new(0, 90, 0, 24); keyBtn.Position = UDim2.new(0, 155, 0, 120)
+keyBtn.Size = UDim2.new(0, 90, 0, 24); keyBtn.Position = UDim2.new(0, 155, 0, 84)
 keyBtn.BackgroundColor3 = Color3.fromRGB(18, 18, 30); keyBtn.BorderSizePixel = 0
 keyBtn.ZIndex = 12; keyBtn.AutoButtonColor = false; keyBtn.Text = "[ F ]"
 keyBtn.Font = Enum.Font.Code; keyBtn.TextSize = 14; keyBtn.TextColor3 = Color3.fromRGB(180, 220, 255)
@@ -335,7 +293,7 @@ Instance.new("UICorner", keyBtn).CornerRadius = UDim.new(0, 4)
 local keySt = Instance.new("UIStroke", keyBtn); keySt.Color = Color3.fromRGB(60, 60, 100)
 
 local stLbl = Instance.new("TextLabel", BG)
-stLbl.Size = UDim2.new(0, 280, 0, 14); stLbl.Position = UDim2.new(0, 6, 0, 148)
+stLbl.Size = UDim2.new(0, 280, 0, 14); stLbl.Position = UDim2.new(0, 6, 0, 112)
 stLbl.BackgroundTransparency = 1; stLbl.Text = "[ F ] basılı tut → spam  ·  bırak → dur"
 stLbl.Font = Enum.Font.Code; stLbl.TextSize = 10
 stLbl.TextColor3 = Color3.fromRGB(60, 60, 100); stLbl.ZIndex = 12
@@ -360,26 +318,30 @@ end)
 keyBtn.MouseEnter:Connect(function() tw(keyBtn, 0.1, {BackgroundColor3 = Color3.fromRGB(30, 30, 46)}) end)
 keyBtn.MouseLeave:Connect(function() tw(keyBtn, 0.1, {BackgroundColor3 = Color3.fromRGB(18, 18, 30)}) end)
 
--- Hold ile tıklama (START bağımsız çalışır)
+-- Hold input
 Svc.UIS.InputBegan:Connect(function(i, gp)
     if gp or binding then return end
     if i.UserInputType == Enum.UserInputType.Keyboard and i.KeyCode == hotkey and not isOn then
-        holdActive = true; setOn()
-        keyBtn.TextColor3 = Color3.fromRGB(60, 255, 120)
+        isOn = true; startLoop()
+        tw(bgSt, 0.15, {Color = Color3.fromRGB(0, 200, 80)})
         tw(keyBtn, 0.15, {BackgroundColor3 = Color3.fromRGB(0, 40, 16)})
+        keyBtn.TextColor3 = Color3.fromRGB(60, 255, 120)
+        stLbl.TextColor3 = Color3.fromRGB(0, 200, 80)
     end
 end)
 Svc.UIS.InputEnded:Connect(function(i)
-    if i.UserInputType == Enum.UserInputType.Keyboard and i.KeyCode == hotkey and holdActive then
-        holdActive = false; setOff()
-        keyBtn.TextColor3 = Color3.fromRGB(180, 220, 255)
+    if i.UserInputType == Enum.UserInputType.Keyboard and i.KeyCode == hotkey and isOn then
+        stopLoop()
+        tw(bgSt, 0.15, {Color = Color3.fromRGB(50, 50, 70)})
         tw(keyBtn, 0.15, {BackgroundColor3 = Color3.fromRGB(18, 18, 30)})
+        keyBtn.TextColor3 = Color3.fromRGB(180, 220, 255)
+        stLbl.TextColor3 = Color3.fromRGB(60, 60, 100)
     end
 end)
 
 -- ═══ LOW GFX ═════════════════════════════════════════════
 local gfxBtn = Instance.new("TextButton", BG)
-gfxBtn.Size = UDim2.new(1, -12, 0, 26); gfxBtn.Position = UDim2.new(0, 6, 0, 170)
+gfxBtn.Size = UDim2.new(1, -12, 0, 26); gfxBtn.Position = UDim2.new(0, 6, 0, 134)
 gfxBtn.BackgroundColor3 = Color3.fromRGB(20, 20, 34); gfxBtn.BorderSizePixel = 0
 gfxBtn.ZIndex = 12; gfxBtn.AutoButtonColor = false; gfxBtn.Text = "🖥  LOW GFX  [ OFF ]"
 gfxBtn.Font = Enum.Font.Code; gfxBtn.TextSize = 14; gfxBtn.TextColor3 = Color3.fromRGB(130, 130, 170)
@@ -401,7 +363,7 @@ gfxBtn.MouseLeave:Connect(function() if not gfxOn then tw(gfxBtn, 0.1, {Backgrou
 
 -- ═══ REJOIN ══════════════════════════════════════════════
 local rjBtn = Instance.new("TextButton", BG)
-rjBtn.Size = UDim2.new(1, -12, 0, 26); rjBtn.Position = UDim2.new(0, 6, 0, 200)
+rjBtn.Size = UDim2.new(1, -12, 0, 26); rjBtn.Position = UDim2.new(0, 6, 0, 165)
 rjBtn.BackgroundColor3 = Color3.fromRGB(22, 16, 16); rjBtn.BorderSizePixel = 0
 rjBtn.ZIndex = 12; rjBtn.AutoButtonColor = false; rjBtn.Text = "🔄  Rejoin Server"
 rjBtn.Font = Enum.Font.Code; rjBtn.TextSize = 14; rjBtn.TextColor3 = Color3.fromRGB(200, 100, 100)
@@ -413,16 +375,15 @@ rjBtn.MouseLeave:Connect(function() tw(rjBtn, 0.1, {BackgroundColor3 = Color3.fr
 
 -- ═══ STATUS BAR ══════════════════════════════════════════
 local barF = Instance.new("Frame", BG)
-barF.Size = UDim2.new(1, -12, 0, 26); barF.Position = UDim2.new(0, 6, 0, 230)
+barF.Size = UDim2.new(1, -12, 0, 26); barF.Position = UDim2.new(0, 6, 0, 197)
 barF.BackgroundColor3 = Color3.fromRGB(14, 14, 22); barF.BorderSizePixel = 0; barF.ZIndex = 12
 Instance.new("UICorner", barF).CornerRadius = UDim.new(0, 5)
 local barLbl = Instance.new("TextLabel", barF)
 barLbl.Size = UDim2.new(1, 0, 1, 0); barLbl.BackgroundTransparency = 1
-barLbl.Text = "⏹  IDLE  —  START'a bas veya [ F ] tut"
+barLbl.Text = "⏹  IDLE  —  hold [ F ] to spam"
 barLbl.Font = Enum.Font.Code; barLbl.TextSize = 11
 barLbl.TextColor3 = Color3.fromRGB(90, 90, 130); barLbl.ZIndex = 13
 
--- Status güncelle
 Svc.RS.Heartbeat:Connect(function()
     pcall(function()
         cpsBox.Text = tostring(realCPS)
@@ -433,11 +394,12 @@ Svc.RS.Heartbeat:Connect(function()
             barLbl.TextColor3 = Color3.fromRGB(60, 220, 80)
             barF.BackgroundColor3 = Color3.fromRGB(6, 22, 10)
         else
-            barLbl.Text = "⏹  IDLE  —  START'a bas veya [ " .. kn .. " ] tut"
+            barLbl.Text = "⏹  IDLE  —  hold [ " .. kn .. " ] to spam"
             barLbl.TextColor3 = Color3.fromRGB(90, 90, 130)
             barF.BackgroundColor3 = Color3.fromRGB(14, 14, 22)
         end
     end)
 end)
 
-print("[GR5 AutoClicker] Loaded | M1:" .. tostring(HAS_M1) .. " M1P:" .. tostring(HAS_M1P) .. " VU:true")
+local method = type(mouse1click)=="function" and "mouse1click" or (type(mouse1press)=="function" and "mouse1press" or "fallback")
+print("[GR5 AutoClicker] Loaded | Method: " .. method)
