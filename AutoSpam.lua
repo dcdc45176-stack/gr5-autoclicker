@@ -1,6 +1,6 @@
 --[[
     AutoClicker  |  made by GR5
-    Cross-executor | High Performance
+    Cross-executor | High Performance | Toggle + Hold
 ]]
 
 -- ═══ GUARD ═══════════════════════════════════════════════
@@ -39,7 +39,7 @@ G.IgnoreGuiInset = true
 G.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
 pcall(function() G.Parent = ROOT end)
 
--- ═══ TWEEN YARDIMCI ══════════════════════════════════════
+-- ═══ TWEEN ═══════════════════════════════════════════════
 local function tw(obj, t, props, style)
     pcall(function()
         Svc.TW:Create(obj, TweenInfo.new(t, style or Enum.EasingStyle.Quart), props):Play()
@@ -49,6 +49,7 @@ end
 -- ═══ STATE ════════════════════════════════════════════════
 local pps         = 20
 local isOn        = false
+local holdActive  = false   -- F tuşu hold ile aktif
 local realCPS     = 0
 local totalClicks = 0
 local hotkey      = Enum.KeyCode.F
@@ -58,16 +59,29 @@ local gfxOn       = false
 local savedSky    = {}
 local savedS, savedB, savedF
 
--- ═══ CLICK METHOD ════════════════════════════════════════
+-- ═══ CLICK ENGINE ════════════════════════════════════════
+-- Executor tespiti (1 kez yap)
 local HAS_M1  = type(mouse1click)   == "function"
 local HAS_M1P = type(mouse1press)   == "function"
 local HAS_M1R = type(mouse1release) == "function"
 
+-- VU'yu 1 kez hazırla
+local vuReady = false
+local function prepareVU()
+    if vuReady then return end
+    pcall(function() Svc.VU:CaptureController() end)
+    vuReady = true
+end
+
 local function doClick()
     pcall(function()
-        if HAS_M1  then mouse1click() end
-        if HAS_M1P and HAS_M1R then mouse1press(); mouse1release() end
-        Svc.VU:CaptureController(); Svc.VU:ClickButton1(Vector2.new())
+        if HAS_M1 then
+            mouse1click()
+        elseif HAS_M1P and HAS_M1R then
+            mouse1press(); mouse1release()
+        else
+            Svc.VU:ClickButton1(Vector2.new())
+        end
     end)
     totalClicks = totalClicks + 1
 end
@@ -75,36 +89,50 @@ end
 -- ═══ LOOP ════════════════════════════════════════════════
 local acc = 0
 local function startLoop()
-    isOn = true
     if loopConn then pcall(function() loopConn:Disconnect() end); loopConn = nil end
-    acc = 0; local t0 = tick(); local cnt = 0
+    prepareVU()
+    acc = 0
+    local t0  = tick()
+    local cnt = 0
     loopConn = Svc.RS.Heartbeat:Connect(function(dt)
         if not isOn then return end
         acc = acc + pps * dt
-        local n = math.min(math.floor(acc), 100)
+        -- max 50 tıklama/frame — yüksek PPS'de donmayı önler
+        local n = math.min(math.floor(acc), 50)
         if n < 1 then return end
         acc = acc - n
         for i = 1, n do doClick() end
         cnt = cnt + n
-        if tick() - t0 >= 1 then realCPS = cnt; cnt = 0; t0 = tick() end
+        if tick() - t0 >= 1 then
+            realCPS = cnt; cnt = 0; t0 = tick()
+        end
     end)
 end
+
 local function stopLoop()
     isOn = false
     if loopConn then pcall(function() loopConn:Disconnect() end); loopConn = nil end
+    vuReady = false
     realCPS = 0
+    acc = 0
 end
 
 -- ═══ LOW GFX ═════════════════════════════════════════════
 local function applyLow()
     gfxOn = true
     pcall(function()
-        savedS = Svc.Lighting.GlobalShadows; savedB = Svc.Lighting.Brightness; savedF = Svc.Lighting.FogEnd
+        savedS = Svc.Lighting.GlobalShadows
+        savedB = Svc.Lighting.Brightness
+        savedF = Svc.Lighting.FogEnd
         pcall(function() settings().Rendering.QualityLevel = Enum.QualityLevel.Level01 end)
-        Svc.Lighting.GlobalShadows = false; Svc.Lighting.FogEnd = 10e9; Svc.Lighting.Brightness = 0.5
+        Svc.Lighting.GlobalShadows = false
+        Svc.Lighting.FogEnd        = 10e9
+        Svc.Lighting.Brightness    = 0.5
         for _, v in ipairs(Svc.Lighting:GetChildren()) do pcall(function()
-            if v:IsA("Sky") or v:IsA("Atmosphere") or v:IsA("BlurEffect") or v:IsA("SunRaysEffect") or v:IsA("ColorCorrectionEffect") or v:IsA("DepthOfFieldEffect") then
-                table.insert(savedSky, {o=v, p=v.Parent}); v.Parent = nil end
+            if v:IsA("Sky") or v:IsA("Atmosphere") or v:IsA("BlurEffect")
+            or v:IsA("SunRaysEffect") or v:IsA("ColorCorrectionEffect") or v:IsA("DepthOfFieldEffect") then
+                table.insert(savedSky, {o=v, p=v.Parent}); v.Parent = nil
+            end
         end) end
         for _, v in ipairs(workspace:GetDescendants()) do pcall(function()
             if v:IsA("Texture") or v:IsA("Decal") then v.Transparency = 1 end
@@ -112,6 +140,7 @@ local function applyLow()
         end) end
     end)
 end
+
 local function restoreLow()
     gfxOn = false
     pcall(function()
@@ -119,16 +148,18 @@ local function restoreLow()
         Svc.Lighting.GlobalShadows = savedS ~= nil and savedS or true
         Svc.Lighting.Brightness    = savedB ~= nil and savedB or 2
         Svc.Lighting.FogEnd        = savedF ~= nil and savedF or 10e9
-        for _, t in ipairs(savedSky) do pcall(function() t.o.Parent = t.p end) end; savedSky = {}
+        for _, t in ipairs(savedSky) do pcall(function() t.o.Parent = t.p end) end
+        savedSky = {}
     end)
 end
 
--- ═══ ANA ÇERÇEVE ═════════════════════════════════════════
-local FULL_H = 220; local MINI_H = 28; local minimized = false
+-- ═══ GUI ═════════════════════════════════════════════════
+local FULL_H = 260; local MINI_H = 28; local minimized = false
 local BG = Instance.new("Frame", G)
-BG.Size = UDim2.new(0, 300, 0, FULL_H); BG.Position = UDim2.new(0.5, -150, 0.3, 0)
-BG.BackgroundColor3 = Color3.fromRGB(10, 10, 14); BG.BorderSizePixel = 0
-BG.ZIndex = 10; BG.Active = true; BG.ClipsDescendants = true
+BG.Size     = UDim2.new(0, 300, 0, FULL_H)
+BG.Position = UDim2.new(0.5, -150, 0.3, 0)
+BG.BackgroundColor3 = Color3.fromRGB(10, 10, 14)
+BG.BorderSizePixel  = 0; BG.ZIndex = 10; BG.Active = true; BG.ClipsDescendants = true
 Instance.new("UICorner", BG).CornerRadius = UDim.new(0, 6)
 local bgSt = Instance.new("UIStroke", BG); bgSt.Thickness = 1.5; bgSt.Color = Color3.fromRGB(50, 50, 70)
 
@@ -144,11 +175,20 @@ task.spawn(function()
 end)
 
 -- Header
-local HDR = Instance.new("Frame", BG); HDR.Size = UDim2.new(1, 0, 0, 28); HDR.BackgroundColor3 = Color3.fromRGB(14, 14, 20); HDR.BorderSizePixel = 0; HDR.ZIndex = 11; Instance.new("UICorner", HDR).CornerRadius = UDim.new(0, 6)
-local hLbl = Instance.new("TextLabel", HDR); hLbl.Size = UDim2.new(1, -8, 1, 0); hLbl.Position = UDim2.new(0, 8, 0, 0); hLbl.BackgroundTransparency = 1; hLbl.Text = "▼  AutoClicker  |  made by GR5"; hLbl.Font = Enum.Font.Code; hLbl.TextSize = 13; hLbl.TextColor3 = Color3.fromRGB(200, 200, 220); hLbl.TextXAlignment = Enum.TextXAlignment.Left; hLbl.ZIndex = 12
-local hBtn = Instance.new("TextButton", HDR); hBtn.Size = UDim2.new(1, 0, 1, 0); hBtn.BackgroundTransparency = 1; hBtn.Text = ""; hBtn.ZIndex = 13; hBtn.AutoButtonColor = false
+local HDR = Instance.new("Frame", BG)
+HDR.Size = UDim2.new(1, 0, 0, 28); HDR.BackgroundColor3 = Color3.fromRGB(14, 14, 20)
+HDR.BorderSizePixel = 0; HDR.ZIndex = 11
+Instance.new("UICorner", HDR).CornerRadius = UDim.new(0, 6)
+local hLbl = Instance.new("TextLabel", HDR)
+hLbl.Size = UDim2.new(1, -8, 1, 0); hLbl.Position = UDim2.new(0, 8, 0, 0)
+hLbl.BackgroundTransparency = 1; hLbl.Text = "▼  AutoClicker  |  made by GR5"
+hLbl.Font = Enum.Font.Code; hLbl.TextSize = 13
+hLbl.TextColor3 = Color3.fromRGB(200, 200, 220); hLbl.TextXAlignment = Enum.TextXAlignment.Left; hLbl.ZIndex = 12
+local hBtn = Instance.new("TextButton", HDR)
+hBtn.Size = UDim2.new(1, 0, 1, 0); hBtn.BackgroundTransparency = 1
+hBtn.Text = ""; hBtn.ZIndex = 13; hBtn.AutoButtonColor = false
 
--- Drag
+-- Drag sistemi
 local dr = false; local ds = Vector2.zero; local dp2 = BG.Position; local dD = 0
 hBtn.InputBegan:Connect(function(i)
     if i.UserInputType == Enum.UserInputType.MouseButton1 then
@@ -161,7 +201,9 @@ Svc.UIS.InputChanged:Connect(function(i)
         pcall(function() BG.Position = UDim2.new(dp2.X.Scale, dp2.X.Offset + d.X, dp2.Y.Scale, dp2.Y.Offset + d.Y) end)
     end
 end)
-Svc.UIS.InputEnded:Connect(function(i) if i.UserInputType == Enum.UserInputType.MouseButton1 then dr = false end end)
+Svc.UIS.InputEnded:Connect(function(i)
+    if i.UserInputType == Enum.UserInputType.MouseButton1 then dr = false end
+end)
 hBtn.MouseButton1Click:Connect(function()
     if dD > 5 then dD = 0; return end
     minimized = not minimized
@@ -186,19 +228,50 @@ end
 -- PPS kontrolleri
 local btnP = mkB("[+]", 8, 34, 34, 24, Color3.fromRGB(0, 35, 15), Color3.fromRGB(0, 220, 100))
 local btnM = mkB("[-]", 46, 34, 34, 24, Color3.fromRGB(35, 10, 10), Color3.fromRGB(220, 80, 80))
-local ppsBox = Instance.new("TextBox", BG); ppsBox.Size = UDim2.new(0, 72, 0, 24); ppsBox.Position = UDim2.new(0, 85, 0, 34); ppsBox.BackgroundColor3 = Color3.fromRGB(20, 20, 30); ppsBox.BorderSizePixel = 0; ppsBox.ZIndex = 12; ppsBox.Text = tostring(pps); ppsBox.Font = Enum.Font.Code; ppsBox.TextSize = 16; ppsBox.TextColor3 = Color3.fromRGB(220, 230, 255); ppsBox.ClearTextOnFocus = false; Instance.new("UICorner", ppsBox).CornerRadius = UDim.new(0, 4); Instance.new("UIStroke", ppsBox).Color = Color3.fromRGB(50, 50, 90)
-local ppsL = Instance.new("TextLabel", BG); ppsL.Size = UDim2.new(0, 40, 0, 24); ppsL.Position = UDim2.new(0, 162, 0, 34); ppsL.BackgroundTransparency = 1; ppsL.Text = "PPS"; ppsL.Font = Enum.Font.Code; ppsL.TextSize = 13; ppsL.TextColor3 = Color3.fromRGB(90, 90, 130); ppsL.ZIndex = 12; ppsL.TextXAlignment = Enum.TextXAlignment.Left
-local cpsBox = Instance.new("TextLabel", BG); cpsBox.Size = UDim2.new(0, 58, 0, 24); cpsBox.Position = UDim2.new(0, 205, 0, 34); cpsBox.BackgroundColor3 = Color3.fromRGB(10, 22, 12); cpsBox.BorderSizePixel = 0; cpsBox.ZIndex = 12; cpsBox.Text = "0"; cpsBox.Font = Enum.Font.Code; cpsBox.TextSize = 16; cpsBox.TextColor3 = Color3.fromRGB(60, 220, 80); cpsBox.TextXAlignment = Enum.TextXAlignment.Center; Instance.new("UICorner", cpsBox).CornerRadius = UDim.new(0, 4); Instance.new("UIStroke", cpsBox).Color = Color3.fromRGB(20, 60, 20)
-local cpsLbl = Instance.new("TextLabel", BG); cpsLbl.Size = UDim2.new(0, 36, 0, 12); cpsLbl.Position = UDim2.new(0, 215, 0, 60); cpsLbl.BackgroundTransparency = 1; cpsLbl.Text = "CPS"; cpsLbl.Font = Enum.Font.Code; cpsLbl.TextSize = 10; cpsLbl.TextColor3 = Color3.fromRGB(40, 90, 40); cpsLbl.ZIndex = 12
-local totLbl = Instance.new("TextLabel", BG); totLbl.Size = UDim2.new(0, 150, 0, 16); totLbl.Position = UDim2.new(0, 5, 0, 62); totLbl.BackgroundTransparency = 1; totLbl.Text = "Total: 0"; totLbl.Font = Enum.Font.Code; totLbl.TextSize = 11; totLbl.TextColor3 = Color3.fromRGB(70, 70, 110); totLbl.ZIndex = 12
+local ppsBox = Instance.new("TextBox", BG)
+ppsBox.Size = UDim2.new(0, 72, 0, 24); ppsBox.Position = UDim2.new(0, 85, 0, 34)
+ppsBox.BackgroundColor3 = Color3.fromRGB(20, 20, 30); ppsBox.BorderSizePixel = 0; ppsBox.ZIndex = 12
+ppsBox.Text = tostring(pps); ppsBox.Font = Enum.Font.Code; ppsBox.TextSize = 16
+ppsBox.TextColor3 = Color3.fromRGB(220, 230, 255); ppsBox.ClearTextOnFocus = false
+Instance.new("UICorner", ppsBox).CornerRadius = UDim.new(0, 4)
+Instance.new("UIStroke", ppsBox).Color = Color3.fromRGB(50, 50, 90)
+
+local ppsL = Instance.new("TextLabel", BG)
+ppsL.Size = UDim2.new(0, 40, 0, 24); ppsL.Position = UDim2.new(0, 162, 0, 34)
+ppsL.BackgroundTransparency = 1; ppsL.Text = "PPS"; ppsL.Font = Enum.Font.Code
+ppsL.TextSize = 13; ppsL.TextColor3 = Color3.fromRGB(90, 90, 130); ppsL.ZIndex = 12
+ppsL.TextXAlignment = Enum.TextXAlignment.Left
+
+local cpsBox = Instance.new("TextLabel", BG)
+cpsBox.Size = UDim2.new(0, 58, 0, 24); cpsBox.Position = UDim2.new(0, 205, 0, 34)
+cpsBox.BackgroundColor3 = Color3.fromRGB(10, 22, 12); cpsBox.BorderSizePixel = 0; cpsBox.ZIndex = 12
+cpsBox.Text = "0"; cpsBox.Font = Enum.Font.Code; cpsBox.TextSize = 16
+cpsBox.TextColor3 = Color3.fromRGB(60, 220, 80); cpsBox.TextXAlignment = Enum.TextXAlignment.Center
+Instance.new("UICorner", cpsBox).CornerRadius = UDim.new(0, 4)
+Instance.new("UIStroke", cpsBox).Color = Color3.fromRGB(20, 60, 20)
+
+local cpsLbl = Instance.new("TextLabel", BG)
+cpsLbl.Size = UDim2.new(0, 36, 0, 12); cpsLbl.Position = UDim2.new(0, 215, 0, 60)
+cpsLbl.BackgroundTransparency = 1; cpsLbl.Text = "CPS"; cpsLbl.Font = Enum.Font.Code
+cpsLbl.TextSize = 10; cpsLbl.TextColor3 = Color3.fromRGB(40, 90, 40); cpsLbl.ZIndex = 12
+
+local totLbl = Instance.new("TextLabel", BG)
+totLbl.Size = UDim2.new(0, 150, 0, 16); totLbl.Position = UDim2.new(0, 5, 0, 62)
+totLbl.BackgroundTransparency = 1; totLbl.Text = "Total: 0"; totLbl.Font = Enum.Font.Code
+totLbl.TextSize = 11; totLbl.TextColor3 = Color3.fromRGB(70, 70, 110); totLbl.ZIndex = 12
 
 ppsBox.FocusLost:Connect(function()
-    pcall(function() local v = tonumber(ppsBox.Text); if v then pps = math.max(math.floor(v), 1) end; ppsBox.Text = tostring(pps) end)
+    pcall(function()
+        local v = tonumber(ppsBox.Text)
+        if v then pps = math.max(math.floor(v), 1) end
+        ppsBox.Text = tostring(pps)
+    end)
 end)
 local function holdCh(d2)
     task.spawn(function()
         task.wait(0.35)
-        while pcall(function() return Svc.UIS:IsMouseButtonPressed(Enum.UserInputType.MouseButton1) end) and Svc.UIS:IsMouseButtonPressed(Enum.UserInputType.MouseButton1) do
+        while pcall(function() return Svc.UIS:IsMouseButtonPressed(Enum.UserInputType.MouseButton1) end)
+            and Svc.UIS:IsMouseButtonPressed(Enum.UserInputType.MouseButton1) do
             pps = math.max(pps + d2, 1); ppsBox.Text = tostring(pps); task.wait(0.07)
         end
     end)
@@ -208,20 +281,77 @@ btnM.MouseButton1Click:Connect(function() pps = math.max(pps - 5, 1); ppsBox.Tex
 btnP.MouseButton1Down:Connect(function() holdCh(5) end)
 btnM.MouseButton1Down:Connect(function() holdCh(-5) end)
 
--- Hotkey seçici
-local kTopL = Instance.new("TextLabel", BG); kTopL.Size = UDim2.new(0, 110, 0, 16); kTopL.Position = UDim2.new(0, 6, 0, 84); kTopL.BackgroundTransparency = 1; kTopL.Text = "Hold Key:"; kTopL.Font = Enum.Font.Code; kTopL.TextSize = 12; kTopL.TextColor3 = Color3.fromRGB(90, 90, 130); kTopL.ZIndex = 12; kTopL.TextXAlignment = Enum.TextXAlignment.Left
-local keyBtn = Instance.new("TextButton", BG); keyBtn.Size = UDim2.new(0, 90, 0, 24); keyBtn.Position = UDim2.new(0, 155, 0, 80); keyBtn.BackgroundColor3 = Color3.fromRGB(18, 18, 30); keyBtn.BorderSizePixel = 0; keyBtn.ZIndex = 12; keyBtn.AutoButtonColor = false; keyBtn.Text = "[ F ]"; keyBtn.Font = Enum.Font.Code; keyBtn.TextSize = 14; keyBtn.TextColor3 = Color3.fromRGB(180, 220, 255); Instance.new("UICorner", keyBtn).CornerRadius = UDim.new(0, 4); local keySt = Instance.new("UIStroke", keyBtn); keySt.Color = Color3.fromRGB(60, 60, 100)
-local stLbl = Instance.new("TextLabel", BG); stLbl.Size = UDim2.new(0, 270, 0, 16); stLbl.Position = UDim2.new(0, 5, 0, 108); stLbl.BackgroundTransparency = 1; stLbl.Text = "[ F ] hold → spam  ·  release → stops"; stLbl.Font = Enum.Font.Code; stLbl.TextSize = 10; stLbl.TextColor3 = Color3.fromRGB(60, 60, 100); stLbl.ZIndex = 12
+-- ═══ START BUTONU (Toggle) ════════════════════════════════
+local startBtn = Instance.new("TextButton", BG)
+startBtn.Size = UDim2.new(1, -12, 0, 32); startBtn.Position = UDim2.new(0, 6, 0, 80)
+startBtn.BackgroundColor3 = Color3.fromRGB(0, 60, 20); startBtn.BorderSizePixel = 0
+startBtn.ZIndex = 12; startBtn.AutoButtonColor = false
+startBtn.Text = "▶  START"; startBtn.Font = Enum.Font.GothamBold; startBtn.TextSize = 16
+startBtn.TextColor3 = Color3.fromRGB(60, 255, 120)
+Instance.new("UICorner", startBtn).CornerRadius = UDim.new(0, 6)
+local startSt = Instance.new("UIStroke", startBtn); startSt.Color = Color3.fromRGB(0, 120, 40); startSt.Thickness = 1.5
+
+local function setOn()
+    isOn = true; startLoop()
+    startBtn.Text = "⏹  STOP"
+    startBtn.TextColor3 = Color3.fromRGB(255, 80, 80)
+    tw(startBtn, 0.2, {BackgroundColor3 = Color3.fromRGB(60, 10, 10)})
+    tw(startSt, 0.2, {Color = Color3.fromRGB(180, 0, 0)})
+    tw(bgSt, 0.15, {Color = Color3.fromRGB(0, 200, 80)})
+end
+
+local function setOff()
+    isOn = false; stopLoop()
+    startBtn.Text = "▶  START"
+    startBtn.TextColor3 = Color3.fromRGB(60, 255, 120)
+    tw(startBtn, 0.2, {BackgroundColor3 = Color3.fromRGB(0, 60, 20)})
+    tw(startSt, 0.2, {Color = Color3.fromRGB(0, 120, 40)})
+    tw(bgSt, 0.15, {Color = Color3.fromRGB(50, 50, 70)})
+end
+
+startBtn.MouseButton1Click:Connect(function()
+    if isOn and not holdActive then setOff() else if not isOn then setOn() end end
+end)
+startBtn.MouseEnter:Connect(function()
+    if not isOn then tw(startBtn, 0.1, {BackgroundColor3 = Color3.fromRGB(0, 90, 30)}) end
+end)
+startBtn.MouseLeave:Connect(function()
+    if not isOn then tw(startBtn, 0.1, {BackgroundColor3 = Color3.fromRGB(0, 60, 20)}) end
+end)
+
+-- ═══ HOLD KEY SEÇİCİ ═════════════════════════════════════
+local kTopL = Instance.new("TextLabel", BG)
+kTopL.Size = UDim2.new(0, 100, 0, 16); kTopL.Position = UDim2.new(0, 6, 0, 124)
+kTopL.BackgroundTransparency = 1; kTopL.Text = "Hold Key:"
+kTopL.Font = Enum.Font.Code; kTopL.TextSize = 12
+kTopL.TextColor3 = Color3.fromRGB(90, 90, 130); kTopL.ZIndex = 12; kTopL.TextXAlignment = Enum.TextXAlignment.Left
+
+local keyBtn = Instance.new("TextButton", BG)
+keyBtn.Size = UDim2.new(0, 90, 0, 24); keyBtn.Position = UDim2.new(0, 155, 0, 120)
+keyBtn.BackgroundColor3 = Color3.fromRGB(18, 18, 30); keyBtn.BorderSizePixel = 0
+keyBtn.ZIndex = 12; keyBtn.AutoButtonColor = false; keyBtn.Text = "[ F ]"
+keyBtn.Font = Enum.Font.Code; keyBtn.TextSize = 14; keyBtn.TextColor3 = Color3.fromRGB(180, 220, 255)
+Instance.new("UICorner", keyBtn).CornerRadius = UDim.new(0, 4)
+local keySt = Instance.new("UIStroke", keyBtn); keySt.Color = Color3.fromRGB(60, 60, 100)
+
+local stLbl = Instance.new("TextLabel", BG)
+stLbl.Size = UDim2.new(0, 280, 0, 14); stLbl.Position = UDim2.new(0, 6, 0, 148)
+stLbl.BackgroundTransparency = 1; stLbl.Text = "[ F ] basılı tut → spam  ·  bırak → dur"
+stLbl.Font = Enum.Font.Code; stLbl.TextSize = 10
+stLbl.TextColor3 = Color3.fromRGB(60, 60, 100); stLbl.ZIndex = 12
 
 keyBtn.MouseButton1Click:Connect(function()
     if binding then return end; binding = true
-    keyBtn.Text = "[ ??? ]"; keyBtn.TextColor3 = Color3.fromRGB(255, 200, 0); tw(keySt, 0.15, {Color = Color3.fromRGB(200, 160, 0)})
+    keyBtn.Text = "[ ??? ]"; keyBtn.TextColor3 = Color3.fromRGB(255, 200, 0)
+    tw(keySt, 0.15, {Color = Color3.fromRGB(200, 160, 0)})
     local con; con = Svc.UIS.InputBegan:Connect(function(i, gp)
         if gp or i.UserInputType ~= Enum.UserInputType.Keyboard then return end
         pcall(function()
-            hotkey = i.KeyCode; local nm = tostring(hotkey):gsub("Enum.KeyCode.", "")
-            keyBtn.Text = "[ " .. nm .. " ]"; keyBtn.TextColor3 = Color3.fromRGB(180, 220, 255)
-            stLbl.Text = "[ " .. nm .. " ] hold → spam  ·  release → stops"
+            hotkey = i.KeyCode
+            local nm = tostring(hotkey):gsub("Enum.KeyCode.", "")
+            keyBtn.Text = "[ " .. nm .. " ]"
+            keyBtn.TextColor3 = Color3.fromRGB(180, 220, 255)
+            stLbl.Text = "[ " .. nm .. " ] basılı tut → spam  ·  bırak → dur"
             tw(keySt, 0.15, {Color = Color3.fromRGB(60, 60, 100)})
         end)
         binding = false; pcall(function() con:Disconnect() end)
@@ -230,49 +360,83 @@ end)
 keyBtn.MouseEnter:Connect(function() tw(keyBtn, 0.1, {BackgroundColor3 = Color3.fromRGB(30, 30, 46)}) end)
 keyBtn.MouseLeave:Connect(function() tw(keyBtn, 0.1, {BackgroundColor3 = Color3.fromRGB(18, 18, 30)}) end)
 
+-- Hold ile tıklama (START bağımsız çalışır)
 Svc.UIS.InputBegan:Connect(function(i, gp)
     if gp or binding then return end
     if i.UserInputType == Enum.UserInputType.Keyboard and i.KeyCode == hotkey and not isOn then
-        isOn = true; startLoop()
-        tw(bgSt, 0.15, {Color = Color3.fromRGB(0, 200, 80)})
+        holdActive = true; setOn()
+        keyBtn.TextColor3 = Color3.fromRGB(60, 255, 120)
         tw(keyBtn, 0.15, {BackgroundColor3 = Color3.fromRGB(0, 40, 16)})
-        keyBtn.TextColor3 = Color3.fromRGB(60, 255, 120); stLbl.TextColor3 = Color3.fromRGB(0, 200, 80)
     end
 end)
 Svc.UIS.InputEnded:Connect(function(i)
-    if i.UserInputType == Enum.UserInputType.Keyboard and i.KeyCode == hotkey and isOn then
-        stopLoop()
-        tw(bgSt, 0.15, {Color = Color3.fromRGB(50, 50, 70)})
+    if i.UserInputType == Enum.UserInputType.Keyboard and i.KeyCode == hotkey and holdActive then
+        holdActive = false; setOff()
+        keyBtn.TextColor3 = Color3.fromRGB(180, 220, 255)
         tw(keyBtn, 0.15, {BackgroundColor3 = Color3.fromRGB(18, 18, 30)})
-        keyBtn.TextColor3 = Color3.fromRGB(180, 220, 255); stLbl.TextColor3 = Color3.fromRGB(60, 60, 100)
     end
 end)
 
--- Low GFX butonu
-local gfxBtn = Instance.new("TextButton", BG); gfxBtn.Size = UDim2.new(1, -12, 0, 28); gfxBtn.Position = UDim2.new(0, 6, 0, 128); gfxBtn.BackgroundColor3 = Color3.fromRGB(20, 20, 34); gfxBtn.BorderSizePixel = 0; gfxBtn.ZIndex = 12; gfxBtn.AutoButtonColor = false; gfxBtn.Text = "🖥  LOW GFX  [ OFF ]"; gfxBtn.Font = Enum.Font.Code; gfxBtn.TextSize = 14; gfxBtn.TextColor3 = Color3.fromRGB(130, 130, 170); Instance.new("UICorner", gfxBtn).CornerRadius = UDim.new(0, 6); Instance.new("UIStroke", gfxBtn).Color = Color3.fromRGB(50, 50, 70)
+-- ═══ LOW GFX ═════════════════════════════════════════════
+local gfxBtn = Instance.new("TextButton", BG)
+gfxBtn.Size = UDim2.new(1, -12, 0, 26); gfxBtn.Position = UDim2.new(0, 6, 0, 170)
+gfxBtn.BackgroundColor3 = Color3.fromRGB(20, 20, 34); gfxBtn.BorderSizePixel = 0
+gfxBtn.ZIndex = 12; gfxBtn.AutoButtonColor = false; gfxBtn.Text = "🖥  LOW GFX  [ OFF ]"
+gfxBtn.Font = Enum.Font.Code; gfxBtn.TextSize = 14; gfxBtn.TextColor3 = Color3.fromRGB(130, 130, 170)
+Instance.new("UICorner", gfxBtn).CornerRadius = UDim.new(0, 6)
+Instance.new("UIStroke", gfxBtn).Color = Color3.fromRGB(50, 50, 70)
 gfxBtn.MouseButton1Click:Connect(function()
-    if gfxOn then restoreLow(); gfxBtn.Text = "🖥  LOW GFX  [ OFF ]"; gfxBtn.TextColor3 = Color3.fromRGB(130, 130, 170); tw(gfxBtn, 0.2, {BackgroundColor3 = Color3.fromRGB(20, 20, 34)})
-    else applyLow(); gfxBtn.Text = "🖥  LOW GFX  [ ON  ]"; gfxBtn.TextColor3 = Color3.fromRGB(60, 220, 120); tw(gfxBtn, 0.2, {BackgroundColor3 = Color3.fromRGB(8, 36, 16)}) end
+    if gfxOn then
+        restoreLow(); gfxBtn.Text = "🖥  LOW GFX  [ OFF ]"
+        gfxBtn.TextColor3 = Color3.fromRGB(130, 130, 170)
+        tw(gfxBtn, 0.2, {BackgroundColor3 = Color3.fromRGB(20, 20, 34)})
+    else
+        applyLow(); gfxBtn.Text = "🖥  LOW GFX  [ ON  ]"
+        gfxBtn.TextColor3 = Color3.fromRGB(60, 220, 120)
+        tw(gfxBtn, 0.2, {BackgroundColor3 = Color3.fromRGB(8, 36, 16)})
+    end
 end)
 gfxBtn.MouseEnter:Connect(function() tw(gfxBtn, 0.1, {BackgroundColor3 = Color3.fromRGB(32, 32, 48)}) end)
 gfxBtn.MouseLeave:Connect(function() if not gfxOn then tw(gfxBtn, 0.1, {BackgroundColor3 = Color3.fromRGB(20, 20, 34)}) end end)
 
--- Rejoin butonu
-local rjBtn = Instance.new("TextButton", BG); rjBtn.Size = UDim2.new(1, -12, 0, 26); rjBtn.Position = UDim2.new(0, 6, 0, 161); rjBtn.BackgroundColor3 = Color3.fromRGB(22, 16, 16); rjBtn.BorderSizePixel = 0; rjBtn.ZIndex = 12; rjBtn.AutoButtonColor = false; rjBtn.Text = "🔄  Rejoin Server"; rjBtn.Font = Enum.Font.Code; rjBtn.TextSize = 14; rjBtn.TextColor3 = Color3.fromRGB(200, 100, 100); Instance.new("UICorner", rjBtn).CornerRadius = UDim.new(0, 6); Instance.new("UIStroke", rjBtn).Color = Color3.fromRGB(80, 30, 30)
+-- ═══ REJOIN ══════════════════════════════════════════════
+local rjBtn = Instance.new("TextButton", BG)
+rjBtn.Size = UDim2.new(1, -12, 0, 26); rjBtn.Position = UDim2.new(0, 6, 0, 200)
+rjBtn.BackgroundColor3 = Color3.fromRGB(22, 16, 16); rjBtn.BorderSizePixel = 0
+rjBtn.ZIndex = 12; rjBtn.AutoButtonColor = false; rjBtn.Text = "🔄  Rejoin Server"
+rjBtn.Font = Enum.Font.Code; rjBtn.TextSize = 14; rjBtn.TextColor3 = Color3.fromRGB(200, 100, 100)
+Instance.new("UICorner", rjBtn).CornerRadius = UDim.new(0, 6)
+Instance.new("UIStroke", rjBtn).Color = Color3.fromRGB(80, 30, 30)
 rjBtn.MouseButton1Click:Connect(function() pcall(function() Svc.TS:Teleport(game.PlaceId, LP) end) end)
 rjBtn.MouseEnter:Connect(function() tw(rjBtn, 0.1, {BackgroundColor3 = Color3.fromRGB(40, 20, 20)}) end)
 rjBtn.MouseLeave:Connect(function() tw(rjBtn, 0.1, {BackgroundColor3 = Color3.fromRGB(22, 16, 16)}) end)
 
--- Status bar
-local barF = Instance.new("Frame", BG); barF.Size = UDim2.new(1, -12, 0, 26); barF.Position = UDim2.new(0, 6, 0, 191); barF.BackgroundColor3 = Color3.fromRGB(14, 14, 22); barF.BorderSizePixel = 0; barF.ZIndex = 12; Instance.new("UICorner", barF).CornerRadius = UDim.new(0, 5)
-local barLbl = Instance.new("TextLabel", barF); barLbl.Size = UDim2.new(1, 0, 1, 0); barLbl.BackgroundTransparency = 1; barLbl.Text = "⏹  WAITING  —  hold [ F ] to spam"; barLbl.Font = Enum.Font.Code; barLbl.TextSize = 12; barLbl.TextColor3 = Color3.fromRGB(90, 90, 130); barLbl.ZIndex = 13
+-- ═══ STATUS BAR ══════════════════════════════════════════
+local barF = Instance.new("Frame", BG)
+barF.Size = UDim2.new(1, -12, 0, 26); barF.Position = UDim2.new(0, 6, 0, 230)
+barF.BackgroundColor3 = Color3.fromRGB(14, 14, 22); barF.BorderSizePixel = 0; barF.ZIndex = 12
+Instance.new("UICorner", barF).CornerRadius = UDim.new(0, 5)
+local barLbl = Instance.new("TextLabel", barF)
+barLbl.Size = UDim2.new(1, 0, 1, 0); barLbl.BackgroundTransparency = 1
+barLbl.Text = "⏹  IDLE  —  START'a bas veya [ F ] tut"
+barLbl.Font = Enum.Font.Code; barLbl.TextSize = 11
+barLbl.TextColor3 = Color3.fromRGB(90, 90, 130); barLbl.ZIndex = 13
 
+-- Status güncelle
 Svc.RS.Heartbeat:Connect(function()
     pcall(function()
-        cpsBox.Text = tostring(realCPS); totLbl.Text = "Total: " .. tostring(totalClicks)
+        cpsBox.Text = tostring(realCPS)
+        totLbl.Text = "Total: " .. tostring(totalClicks)
         local kn = tostring(hotkey):gsub("Enum.KeyCode.", "")
-        if isOn then barLbl.Text = "▶  RUNNING  (" .. realCPS .. " CPS)"; barLbl.TextColor3 = Color3.fromRGB(60, 220, 80); barF.BackgroundColor3 = Color3.fromRGB(6, 22, 10)
-        else barLbl.Text = "⏹  IDLE  —  hold [ " .. kn .. " ] to spam"; barLbl.TextColor3 = Color3.fromRGB(90, 90, 130); barF.BackgroundColor3 = Color3.fromRGB(14, 14, 22) end
+        if isOn then
+            barLbl.Text = "▶  RUNNING  (" .. realCPS .. " CPS)"
+            barLbl.TextColor3 = Color3.fromRGB(60, 220, 80)
+            barF.BackgroundColor3 = Color3.fromRGB(6, 22, 10)
+        else
+            barLbl.Text = "⏹  IDLE  —  START'a bas veya [ " .. kn .. " ] tut"
+            barLbl.TextColor3 = Color3.fromRGB(90, 90, 130)
+            barF.BackgroundColor3 = Color3.fromRGB(14, 14, 22)
+        end
     end)
 end)
 
