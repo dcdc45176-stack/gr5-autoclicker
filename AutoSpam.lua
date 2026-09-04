@@ -1,6 +1,6 @@
 --[[
     AutoClicker  |  made by GR5
-    Cross-executor | Anti-Detection | High PPS
+    Cross-executor | Anti-Detection
 ]]
 
 -- ═══ GUARD ═══════════════════════════════════════════════
@@ -45,23 +45,14 @@ local function tw(obj, t, props, style)
     end)
 end
 
--- ═══ CLICK ENGINE (VirtualUser YOK) ══════════════════════
--- Executor'ün desteklediği en iyi metodu otomatik seçer
+-- ═══ CLICK ENGINE ════════════════════════════════════════
 local clickFn = nil
-
 if type(mouse1click) == "function" then
     clickFn = function() mouse1click() end
 elseif type(mouse1press) == "function" and type(mouse1release) == "function" then
     clickFn = function() mouse1press(); mouse1release() end
-elseif type(Input) == "table" and type(Input.SendMouseEvent) == "function" then
-    clickFn = function()
-        Input.SendMouseEvent(0, 0, 0, 0, workspace.CurrentCamera)
-        Input.SendMouseEvent(0, 0, 0, 0, workspace.CurrentCamera)
-    end
 else
-    -- Son çare: UserInputService simülasyonu
     clickFn = function()
-        local args = {Enum.UserInputType.MouseButton1, false}
         pcall(function() Svc.UIS:SendEvent(Enum.UserInputType.MouseButton1, Enum.KeyCode.Unknown, 0, 0, false) end)
     end
 end
@@ -69,6 +60,8 @@ end
 -- ═══ STATE ════════════════════════════════════════════════
 local pps         = 20
 local isOn        = false
+local toggleOn    = false   -- START butonu ile açık mı?
+local countdown   = false   -- Geri sayım aktif mi?
 local realCPS     = 0
 local totalClicks = 0
 local hotkey      = Enum.KeyCode.F
@@ -83,26 +76,22 @@ local function doClick()
     totalClicks = totalClicks + 1
 end
 
--- ═══ LOOP (Heartbeat tabanlı, hafif random) ══════════════
+-- ═══ LOOP ════════════════════════════════════════════════
 local acc = 0
 local function startLoop()
     if loopConn then pcall(function() loopConn:Disconnect() end); loopConn = nil end
     acc = 0
-    local t0  = tick()
-    local cnt = 0
+    local t0 = tick(); local cnt = 0
     loopConn = Svc.RS.Heartbeat:Connect(function(dt)
         if not isOn then return end
-        -- Hafif rastgelelik → anti-cheat'e daha insan gibi görünür
-        local jitter = pps * (1 + (math.random() - 0.5) * 0.05)
+        local jitter = pps * (1 + (math.random() - 0.5) * 0.04)
         acc = acc + jitter * dt
-        local n = math.min(math.floor(acc), 60)
+        local n = math.min(math.floor(acc), 80)
         if n < 1 then return end
         acc = acc - n
         for i = 1, n do doClick() end
         cnt = cnt + n
-        if tick() - t0 >= 1 then
-            realCPS = cnt; cnt = 0; t0 = tick()
-        end
+        if tick() - t0 >= 1 then realCPS = cnt; cnt = 0; t0 = tick() end
     end)
 end
 
@@ -116,18 +105,12 @@ end
 local function applyLow()
     gfxOn = true
     pcall(function()
-        savedS = Svc.Lighting.GlobalShadows
-        savedB = Svc.Lighting.Brightness
-        savedF = Svc.Lighting.FogEnd
+        savedS = Svc.Lighting.GlobalShadows; savedB = Svc.Lighting.Brightness; savedF = Svc.Lighting.FogEnd
         pcall(function() settings().Rendering.QualityLevel = Enum.QualityLevel.Level01 end)
-        Svc.Lighting.GlobalShadows = false
-        Svc.Lighting.FogEnd        = 10e9
-        Svc.Lighting.Brightness    = 0.5
+        Svc.Lighting.GlobalShadows = false; Svc.Lighting.FogEnd = 10e9; Svc.Lighting.Brightness = 0.5
         for _, v in ipairs(Svc.Lighting:GetChildren()) do pcall(function()
-            if v:IsA("Sky") or v:IsA("Atmosphere") or v:IsA("BlurEffect")
-            or v:IsA("SunRaysEffect") or v:IsA("ColorCorrectionEffect") or v:IsA("DepthOfFieldEffect") then
-                table.insert(savedSky, {o=v, p=v.Parent}); v.Parent = nil
-            end
+            if v:IsA("Sky") or v:IsA("Atmosphere") or v:IsA("BlurEffect") or v:IsA("SunRaysEffect") or v:IsA("ColorCorrectionEffect") or v:IsA("DepthOfFieldEffect") then
+                table.insert(savedSky, {o=v, p=v.Parent}); v.Parent = nil end
         end) end
         for _, v in ipairs(workspace:GetDescendants()) do pcall(function()
             if v:IsA("Texture") or v:IsA("Decal") then v.Transparency = 1 end
@@ -135,7 +118,6 @@ local function applyLow()
         end) end
     end)
 end
-
 local function restoreLow()
     gfxOn = false
     pcall(function()
@@ -143,22 +125,19 @@ local function restoreLow()
         Svc.Lighting.GlobalShadows = savedS ~= nil and savedS or true
         Svc.Lighting.Brightness    = savedB ~= nil and savedB or 2
         Svc.Lighting.FogEnd        = savedF ~= nil and savedF or 10e9
-        for _, t in ipairs(savedSky) do pcall(function() t.o.Parent = t.p end) end
-        savedSky = {}
+        for _, t in ipairs(savedSky) do pcall(function() t.o.Parent = t.p end) end; savedSky = {}
     end)
 end
 
 -- ═══ GUI ═════════════════════════════════════════════════
-local FULL_H = 230; local MINI_H = 28; local minimized = false
+local FULL_H = 270; local MINI_H = 28; local minimized = false
 local BG = Instance.new("Frame", G)
-BG.Size     = UDim2.new(0, 300, 0, FULL_H)
-BG.Position = UDim2.new(0.5, -150, 0.3, 0)
-BG.BackgroundColor3 = Color3.fromRGB(10, 10, 14)
-BG.BorderSizePixel  = 0; BG.ZIndex = 10; BG.Active = true; BG.ClipsDescendants = true
+BG.Size = UDim2.new(0, 300, 0, FULL_H); BG.Position = UDim2.new(0.5, -150, 0.3, 0)
+BG.BackgroundColor3 = Color3.fromRGB(10, 10, 14); BG.BorderSizePixel = 0
+BG.ZIndex = 10; BG.Active = true; BG.ClipsDescendants = true
 Instance.new("UICorner", BG).CornerRadius = UDim.new(0, 6)
 local bgSt = Instance.new("UIStroke", BG); bgSt.Thickness = 1.5; bgSt.Color = Color3.fromRGB(50, 50, 70)
 
--- Animasyonlu border
 task.spawn(function()
     local h = 0
     while BG and BG.Parent do
@@ -170,25 +149,13 @@ task.spawn(function()
 end)
 
 -- Header
-local HDR = Instance.new("Frame", BG)
-HDR.Size = UDim2.new(1, 0, 0, 28); HDR.BackgroundColor3 = Color3.fromRGB(14, 14, 20)
-HDR.BorderSizePixel = 0; HDR.ZIndex = 11
-Instance.new("UICorner", HDR).CornerRadius = UDim.new(0, 6)
-local hLbl = Instance.new("TextLabel", HDR)
-hLbl.Size = UDim2.new(1, -8, 1, 0); hLbl.Position = UDim2.new(0, 8, 0, 0)
-hLbl.BackgroundTransparency = 1; hLbl.Text = "▼  AutoClicker  |  made by GR5"
-hLbl.Font = Enum.Font.Code; hLbl.TextSize = 13
-hLbl.TextColor3 = Color3.fromRGB(200, 200, 220); hLbl.TextXAlignment = Enum.TextXAlignment.Left; hLbl.ZIndex = 12
-local hBtn = Instance.new("TextButton", HDR)
-hBtn.Size = UDim2.new(1, 0, 1, 0); hBtn.BackgroundTransparency = 1
-hBtn.Text = ""; hBtn.ZIndex = 13; hBtn.AutoButtonColor = false
+local HDR = Instance.new("Frame", BG); HDR.Size = UDim2.new(1, 0, 0, 28); HDR.BackgroundColor3 = Color3.fromRGB(14, 14, 20); HDR.BorderSizePixel = 0; HDR.ZIndex = 11; Instance.new("UICorner", HDR).CornerRadius = UDim.new(0, 6)
+local hLbl = Instance.new("TextLabel", HDR); hLbl.Size = UDim2.new(1, -8, 1, 0); hLbl.Position = UDim2.new(0, 8, 0, 0); hLbl.BackgroundTransparency = 1; hLbl.Text = "▼  AutoClicker  |  made by GR5"; hLbl.Font = Enum.Font.Code; hLbl.TextSize = 13; hLbl.TextColor3 = Color3.fromRGB(200, 200, 220); hLbl.TextXAlignment = Enum.TextXAlignment.Left; hLbl.ZIndex = 12
+local hBtn = Instance.new("TextButton", HDR); hBtn.Size = UDim2.new(1, 0, 1, 0); hBtn.BackgroundTransparency = 1; hBtn.Text = ""; hBtn.ZIndex = 13; hBtn.AutoButtonColor = false
 
--- Drag
 local dr = false; local ds = Vector2.zero; local dp2 = BG.Position; local dD = 0
 hBtn.InputBegan:Connect(function(i)
-    if i.UserInputType == Enum.UserInputType.MouseButton1 then
-        dr = true; dD = 0; ds = Vector2.new(i.Position.X, i.Position.Y); dp2 = BG.Position
-    end
+    if i.UserInputType == Enum.UserInputType.MouseButton1 then dr = true; dD = 0; ds = Vector2.new(i.Position.X, i.Position.Y); dp2 = BG.Position end
 end)
 Svc.UIS.InputChanged:Connect(function(i)
     if dr and i.UserInputType == Enum.UserInputType.MouseMovement then
@@ -196,9 +163,7 @@ Svc.UIS.InputChanged:Connect(function(i)
         pcall(function() BG.Position = UDim2.new(dp2.X.Scale, dp2.X.Offset + d.X, dp2.Y.Scale, dp2.Y.Offset + d.Y) end)
     end
 end)
-Svc.UIS.InputEnded:Connect(function(i)
-    if i.UserInputType == Enum.UserInputType.MouseButton1 then dr = false end
-end)
+Svc.UIS.InputEnded:Connect(function(i) if i.UserInputType == Enum.UserInputType.MouseButton1 then dr = false end end)
 hBtn.MouseButton1Click:Connect(function()
     if dD > 5 then dD = 0; return end
     minimized = not minimized
@@ -206,7 +171,6 @@ hBtn.MouseButton1Click:Connect(function()
     tw(BG, 0.25, {Size = UDim2.new(0, 300, 0, minimized and MINI_H or FULL_H)})
 end)
 
--- Buton yardımcı
 local function mkB(txt, x, y, w, h2, bc, tc)
     local b = Instance.new("TextButton", BG)
     b.Size = UDim2.new(0, w, 0, h2); b.Position = UDim2.new(0, x, 0, y)
@@ -223,51 +187,19 @@ end
 -- PPS kontrolleri
 local btnP = mkB("[+]", 8, 34, 34, 24, Color3.fromRGB(0, 35, 15), Color3.fromRGB(0, 220, 100))
 local btnM = mkB("[-]", 46, 34, 34, 24, Color3.fromRGB(35, 10, 10), Color3.fromRGB(220, 80, 80))
-
-local ppsBox = Instance.new("TextBox", BG)
-ppsBox.Size = UDim2.new(0, 72, 0, 24); ppsBox.Position = UDim2.new(0, 85, 0, 34)
-ppsBox.BackgroundColor3 = Color3.fromRGB(20, 20, 30); ppsBox.BorderSizePixel = 0; ppsBox.ZIndex = 12
-ppsBox.Text = tostring(pps); ppsBox.Font = Enum.Font.Code; ppsBox.TextSize = 16
-ppsBox.TextColor3 = Color3.fromRGB(220, 230, 255); ppsBox.ClearTextOnFocus = false
-Instance.new("UICorner", ppsBox).CornerRadius = UDim.new(0, 4)
-Instance.new("UIStroke", ppsBox).Color = Color3.fromRGB(50, 50, 90)
-
-local ppsL = Instance.new("TextLabel", BG)
-ppsL.Size = UDim2.new(0, 40, 0, 24); ppsL.Position = UDim2.new(0, 162, 0, 34)
-ppsL.BackgroundTransparency = 1; ppsL.Text = "PPS"; ppsL.Font = Enum.Font.Code
-ppsL.TextSize = 13; ppsL.TextColor3 = Color3.fromRGB(90, 90, 130); ppsL.ZIndex = 12
-ppsL.TextXAlignment = Enum.TextXAlignment.Left
-
-local cpsBox = Instance.new("TextLabel", BG)
-cpsBox.Size = UDim2.new(0, 58, 0, 24); cpsBox.Position = UDim2.new(0, 205, 0, 34)
-cpsBox.BackgroundColor3 = Color3.fromRGB(10, 22, 12); cpsBox.BorderSizePixel = 0; cpsBox.ZIndex = 12
-cpsBox.Text = "0"; cpsBox.Font = Enum.Font.Code; cpsBox.TextSize = 16
-cpsBox.TextColor3 = Color3.fromRGB(60, 220, 80); cpsBox.TextXAlignment = Enum.TextXAlignment.Center
-Instance.new("UICorner", cpsBox).CornerRadius = UDim.new(0, 4)
-Instance.new("UIStroke", cpsBox).Color = Color3.fromRGB(20, 60, 20)
-
-local cpsLbl = Instance.new("TextLabel", BG)
-cpsLbl.Size = UDim2.new(0, 36, 0, 12); cpsLbl.Position = UDim2.new(0, 215, 0, 60)
-cpsLbl.BackgroundTransparency = 1; cpsLbl.Text = "CPS"; cpsLbl.Font = Enum.Font.Code
-cpsLbl.TextSize = 10; cpsLbl.TextColor3 = Color3.fromRGB(40, 90, 40); cpsLbl.ZIndex = 12
-
-local totLbl = Instance.new("TextLabel", BG)
-totLbl.Size = UDim2.new(0, 150, 0, 16); totLbl.Position = UDim2.new(0, 5, 0, 62)
-totLbl.BackgroundTransparency = 1; totLbl.Text = "Total: 0"; totLbl.Font = Enum.Font.Code
-totLbl.TextSize = 11; totLbl.TextColor3 = Color3.fromRGB(70, 70, 110); totLbl.ZIndex = 12
+local ppsBox = Instance.new("TextBox", BG); ppsBox.Size = UDim2.new(0, 72, 0, 24); ppsBox.Position = UDim2.new(0, 85, 0, 34); ppsBox.BackgroundColor3 = Color3.fromRGB(20, 20, 30); ppsBox.BorderSizePixel = 0; ppsBox.ZIndex = 12; ppsBox.Text = tostring(pps); ppsBox.Font = Enum.Font.Code; ppsBox.TextSize = 16; ppsBox.TextColor3 = Color3.fromRGB(220, 230, 255); ppsBox.ClearTextOnFocus = false; Instance.new("UICorner", ppsBox).CornerRadius = UDim.new(0, 4); Instance.new("UIStroke", ppsBox).Color = Color3.fromRGB(50, 50, 90)
+local ppsL = Instance.new("TextLabel", BG); ppsL.Size = UDim2.new(0, 40, 0, 24); ppsL.Position = UDim2.new(0, 162, 0, 34); ppsL.BackgroundTransparency = 1; ppsL.Text = "PPS"; ppsL.Font = Enum.Font.Code; ppsL.TextSize = 13; ppsL.TextColor3 = Color3.fromRGB(90, 90, 130); ppsL.ZIndex = 12; ppsL.TextXAlignment = Enum.TextXAlignment.Left
+local cpsBox = Instance.new("TextLabel", BG); cpsBox.Size = UDim2.new(0, 58, 0, 24); cpsBox.Position = UDim2.new(0, 205, 0, 34); cpsBox.BackgroundColor3 = Color3.fromRGB(10, 22, 12); cpsBox.BorderSizePixel = 0; cpsBox.ZIndex = 12; cpsBox.Text = "0"; cpsBox.Font = Enum.Font.Code; cpsBox.TextSize = 16; cpsBox.TextColor3 = Color3.fromRGB(60, 220, 80); cpsBox.TextXAlignment = Enum.TextXAlignment.Center; Instance.new("UICorner", cpsBox).CornerRadius = UDim.new(0, 4); Instance.new("UIStroke", cpsBox).Color = Color3.fromRGB(20, 60, 20)
+local cpsLbl = Instance.new("TextLabel", BG); cpsLbl.Size = UDim2.new(0, 36, 0, 12); cpsLbl.Position = UDim2.new(0, 215, 0, 60); cpsLbl.BackgroundTransparency = 1; cpsLbl.Text = "CPS"; cpsLbl.Font = Enum.Font.Code; cpsLbl.TextSize = 10; cpsLbl.TextColor3 = Color3.fromRGB(40, 90, 40); cpsLbl.ZIndex = 12
+local totLbl = Instance.new("TextLabel", BG); totLbl.Size = UDim2.new(0, 150, 0, 16); totLbl.Position = UDim2.new(0, 5, 0, 62); totLbl.BackgroundTransparency = 1; totLbl.Text = "Total: 0"; totLbl.Font = Enum.Font.Code; totLbl.TextSize = 11; totLbl.TextColor3 = Color3.fromRGB(70, 70, 110); totLbl.ZIndex = 12
 
 ppsBox.FocusLost:Connect(function()
-    pcall(function()
-        local v = tonumber(ppsBox.Text)
-        if v then pps = math.max(math.floor(v), 1) end
-        ppsBox.Text = tostring(pps)
-    end)
+    pcall(function() local v = tonumber(ppsBox.Text); if v then pps = math.max(math.floor(v), 1) end; ppsBox.Text = tostring(pps) end)
 end)
 local function holdCh(d2)
     task.spawn(function()
         task.wait(0.35)
-        while pcall(function() return Svc.UIS:IsMouseButtonPressed(Enum.UserInputType.MouseButton1) end)
-            and Svc.UIS:IsMouseButtonPressed(Enum.UserInputType.MouseButton1) do
+        while Svc.UIS:IsMouseButtonPressed(Enum.UserInputType.MouseButton1) do
             pps = math.max(pps + d2, 1); ppsBox.Text = tostring(pps); task.wait(0.07)
         end
     end)
@@ -277,26 +209,72 @@ btnM.MouseButton1Click:Connect(function() pps = math.max(pps - 5, 1); ppsBox.Tex
 btnP.MouseButton1Down:Connect(function() holdCh(5) end)
 btnM.MouseButton1Down:Connect(function() holdCh(-5) end)
 
+-- ═══ START BUTONU (3-2-1 geri sayım) ════════════════════
+local startBtn = Instance.new("TextButton", BG)
+startBtn.Size = UDim2.new(1, -12, 0, 34); startBtn.Position = UDim2.new(0, 6, 0, 82)
+startBtn.BackgroundColor3 = Color3.fromRGB(0, 55, 20); startBtn.BorderSizePixel = 0
+startBtn.ZIndex = 12; startBtn.AutoButtonColor = false
+startBtn.Text = "▶  BAŞLAT"; startBtn.Font = Enum.Font.GothamBold; startBtn.TextSize = 16
+startBtn.TextColor3 = Color3.fromRGB(60, 255, 120)
+Instance.new("UICorner", startBtn).CornerRadius = UDim.new(0, 6)
+local startSt = Instance.new("UIStroke", startBtn); startSt.Color = Color3.fromRGB(0, 120, 40); startSt.Thickness = 1.5
+
+local function setRunning()
+    toggleOn = true; isOn = true; countdown = false
+    startBtn.Text = "⏹  DURDUR"
+    startBtn.TextColor3 = Color3.fromRGB(255, 80, 80)
+    tw(startBtn, 0.2, {BackgroundColor3 = Color3.fromRGB(55, 8, 8)})
+    tw(startSt, 0.2, {Color = Color3.fromRGB(180, 0, 0)})
+    startLoop()
+end
+
+local function setStopped()
+    toggleOn = false; countdown = false; stopLoop()
+    startBtn.Text = "▶  BAŞLAT"
+    startBtn.TextColor3 = Color3.fromRGB(60, 255, 120)
+    tw(startBtn, 0.2, {BackgroundColor3 = Color3.fromRGB(0, 55, 20)})
+    tw(startSt, 0.2, {Color = Color3.fromRGB(0, 120, 40)})
+    startBtn.Interactable = true
+end
+
+startBtn.MouseButton1Click:Connect(function()
+    if countdown then
+        -- Geri sayımı iptal et
+        setStopped(); return
+    end
+    if toggleOn then
+        setStopped(); return
+    end
+
+    -- 3-2-1 geri sayım başlat
+    countdown = true
+    startBtn.Interactable = false
+    task.spawn(function()
+        for i = 3, 1, -1 do
+            if not countdown then return end
+            startBtn.Text = "⌛  " .. i .. "..."
+            startBtn.TextColor3 = Color3.fromRGB(255, 220, 0)
+            tw(startBtn, 0.1, {BackgroundColor3 = Color3.fromRGB(40, 35, 0)})
+            tw(startSt, 0.1, {Color = Color3.fromRGB(180, 150, 0)})
+            task.wait(1)
+        end
+        if not countdown then return end
+        startBtn.Interactable = true
+        setRunning()
+    end)
+end)
+
+startBtn.MouseEnter:Connect(function()
+    if not toggleOn and not countdown then tw(startBtn, 0.1, {BackgroundColor3 = Color3.fromRGB(0, 80, 30)}) end
+end)
+startBtn.MouseLeave:Connect(function()
+    if not toggleOn and not countdown then tw(startBtn, 0.1, {BackgroundColor3 = Color3.fromRGB(0, 55, 20)}) end
+end)
+
 -- ═══ HOLD KEY SEÇİCİ ═════════════════════════════════════
-local kTopL = Instance.new("TextLabel", BG)
-kTopL.Size = UDim2.new(0, 100, 0, 16); kTopL.Position = UDim2.new(0, 6, 0, 88)
-kTopL.BackgroundTransparency = 1; kTopL.Text = "Hold Key:"
-kTopL.Font = Enum.Font.Code; kTopL.TextSize = 12
-kTopL.TextColor3 = Color3.fromRGB(90, 90, 130); kTopL.ZIndex = 12; kTopL.TextXAlignment = Enum.TextXAlignment.Left
-
-local keyBtn = Instance.new("TextButton", BG)
-keyBtn.Size = UDim2.new(0, 90, 0, 24); keyBtn.Position = UDim2.new(0, 155, 0, 84)
-keyBtn.BackgroundColor3 = Color3.fromRGB(18, 18, 30); keyBtn.BorderSizePixel = 0
-keyBtn.ZIndex = 12; keyBtn.AutoButtonColor = false; keyBtn.Text = "[ F ]"
-keyBtn.Font = Enum.Font.Code; keyBtn.TextSize = 14; keyBtn.TextColor3 = Color3.fromRGB(180, 220, 255)
-Instance.new("UICorner", keyBtn).CornerRadius = UDim.new(0, 4)
-local keySt = Instance.new("UIStroke", keyBtn); keySt.Color = Color3.fromRGB(60, 60, 100)
-
-local stLbl = Instance.new("TextLabel", BG)
-stLbl.Size = UDim2.new(0, 280, 0, 14); stLbl.Position = UDim2.new(0, 6, 0, 112)
-stLbl.BackgroundTransparency = 1; stLbl.Text = "[ F ] basılı tut → spam  ·  bırak → dur"
-stLbl.Font = Enum.Font.Code; stLbl.TextSize = 10
-stLbl.TextColor3 = Color3.fromRGB(60, 60, 100); stLbl.ZIndex = 12
+local kTopL = Instance.new("TextLabel", BG); kTopL.Size = UDim2.new(0, 100, 0, 16); kTopL.Position = UDim2.new(0, 6, 0, 130); kTopL.BackgroundTransparency = 1; kTopL.Text = "Hold Key:"; kTopL.Font = Enum.Font.Code; kTopL.TextSize = 12; kTopL.TextColor3 = Color3.fromRGB(90, 90, 130); kTopL.ZIndex = 12; kTopL.TextXAlignment = Enum.TextXAlignment.Left
+local keyBtn = Instance.new("TextButton", BG); keyBtn.Size = UDim2.new(0, 90, 0, 24); keyBtn.Position = UDim2.new(0, 155, 0, 126); keyBtn.BackgroundColor3 = Color3.fromRGB(18, 18, 30); keyBtn.BorderSizePixel = 0; keyBtn.ZIndex = 12; keyBtn.AutoButtonColor = false; keyBtn.Text = "[ F ]"; keyBtn.Font = Enum.Font.Code; keyBtn.TextSize = 14; keyBtn.TextColor3 = Color3.fromRGB(180, 220, 255); Instance.new("UICorner", keyBtn).CornerRadius = UDim.new(0, 4); local keySt = Instance.new("UIStroke", keyBtn); keySt.Color = Color3.fromRGB(60, 60, 100)
+local stLbl = Instance.new("TextLabel", BG); stLbl.Size = UDim2.new(0, 280, 0, 14); stLbl.Position = UDim2.new(0, 6, 0, 154); stLbl.BackgroundTransparency = 1; stLbl.Text = "[ F ] basılı tut → spam  ·  bırak → dur"; stLbl.Font = Enum.Font.Code; stLbl.TextSize = 10; stLbl.TextColor3 = Color3.fromRGB(60, 60, 100); stLbl.ZIndex = 12
 
 keyBtn.MouseButton1Click:Connect(function()
     if binding then return end; binding = true
@@ -305,10 +283,8 @@ keyBtn.MouseButton1Click:Connect(function()
     local con; con = Svc.UIS.InputBegan:Connect(function(i, gp)
         if gp or i.UserInputType ~= Enum.UserInputType.Keyboard then return end
         pcall(function()
-            hotkey = i.KeyCode
-            local nm = tostring(hotkey):gsub("Enum.KeyCode.", "")
-            keyBtn.Text = "[ " .. nm .. " ]"
-            keyBtn.TextColor3 = Color3.fromRGB(180, 220, 255)
+            hotkey = i.KeyCode; local nm = tostring(hotkey):gsub("Enum.KeyCode.", "")
+            keyBtn.Text = "[ " .. nm .. " ]"; keyBtn.TextColor3 = Color3.fromRGB(180, 220, 255)
             stLbl.Text = "[ " .. nm .. " ] basılı tut → spam  ·  bırak → dur"
             tw(keySt, 0.15, {Color = Color3.fromRGB(60, 60, 100)})
         end)
@@ -318,21 +294,20 @@ end)
 keyBtn.MouseEnter:Connect(function() tw(keyBtn, 0.1, {BackgroundColor3 = Color3.fromRGB(30, 30, 46)}) end)
 keyBtn.MouseLeave:Connect(function() tw(keyBtn, 0.1, {BackgroundColor3 = Color3.fromRGB(18, 18, 30)}) end)
 
--- Hold input
+-- Hold: sadece toggleOn kapalıyken çalışır
 Svc.UIS.InputBegan:Connect(function(i, gp)
-    if gp or binding then return end
+    if gp or binding or toggleOn or countdown then return end  -- START açıksa F devre dışı
     if i.UserInputType == Enum.UserInputType.Keyboard and i.KeyCode == hotkey and not isOn then
         isOn = true; startLoop()
-        tw(bgSt, 0.15, {Color = Color3.fromRGB(0, 200, 80)})
         tw(keyBtn, 0.15, {BackgroundColor3 = Color3.fromRGB(0, 40, 16)})
         keyBtn.TextColor3 = Color3.fromRGB(60, 255, 120)
         stLbl.TextColor3 = Color3.fromRGB(0, 200, 80)
     end
 end)
 Svc.UIS.InputEnded:Connect(function(i)
+    if toggleOn or countdown then return end  -- START açıksa F dinleme
     if i.UserInputType == Enum.UserInputType.Keyboard and i.KeyCode == hotkey and isOn then
         stopLoop()
-        tw(bgSt, 0.15, {Color = Color3.fromRGB(50, 50, 70)})
         tw(keyBtn, 0.15, {BackgroundColor3 = Color3.fromRGB(18, 18, 30)})
         keyBtn.TextColor3 = Color3.fromRGB(180, 220, 255)
         stLbl.TextColor3 = Color3.fromRGB(60, 60, 100)
@@ -340,61 +315,38 @@ Svc.UIS.InputEnded:Connect(function(i)
 end)
 
 -- ═══ LOW GFX ═════════════════════════════════════════════
-local gfxBtn = Instance.new("TextButton", BG)
-gfxBtn.Size = UDim2.new(1, -12, 0, 26); gfxBtn.Position = UDim2.new(0, 6, 0, 134)
-gfxBtn.BackgroundColor3 = Color3.fromRGB(20, 20, 34); gfxBtn.BorderSizePixel = 0
-gfxBtn.ZIndex = 12; gfxBtn.AutoButtonColor = false; gfxBtn.Text = "🖥  LOW GFX  [ OFF ]"
-gfxBtn.Font = Enum.Font.Code; gfxBtn.TextSize = 14; gfxBtn.TextColor3 = Color3.fromRGB(130, 130, 170)
-Instance.new("UICorner", gfxBtn).CornerRadius = UDim.new(0, 6)
-Instance.new("UIStroke", gfxBtn).Color = Color3.fromRGB(50, 50, 70)
+local gfxBtn = Instance.new("TextButton", BG); gfxBtn.Size = UDim2.new(1, -12, 0, 26); gfxBtn.Position = UDim2.new(0, 6, 0, 176); gfxBtn.BackgroundColor3 = Color3.fromRGB(20, 20, 34); gfxBtn.BorderSizePixel = 0; gfxBtn.ZIndex = 12; gfxBtn.AutoButtonColor = false; gfxBtn.Text = "🖥  LOW GFX  [ OFF ]"; gfxBtn.Font = Enum.Font.Code; gfxBtn.TextSize = 14; gfxBtn.TextColor3 = Color3.fromRGB(130, 130, 170); Instance.new("UICorner", gfxBtn).CornerRadius = UDim.new(0, 6); Instance.new("UIStroke", gfxBtn).Color = Color3.fromRGB(50, 50, 70)
 gfxBtn.MouseButton1Click:Connect(function()
-    if gfxOn then
-        restoreLow(); gfxBtn.Text = "🖥  LOW GFX  [ OFF ]"
-        gfxBtn.TextColor3 = Color3.fromRGB(130, 130, 170)
-        tw(gfxBtn, 0.2, {BackgroundColor3 = Color3.fromRGB(20, 20, 34)})
-    else
-        applyLow(); gfxBtn.Text = "🖥  LOW GFX  [ ON  ]"
-        gfxBtn.TextColor3 = Color3.fromRGB(60, 220, 120)
-        tw(gfxBtn, 0.2, {BackgroundColor3 = Color3.fromRGB(8, 36, 16)})
-    end
+    if gfxOn then restoreLow(); gfxBtn.Text = "🖥  LOW GFX  [ OFF ]"; gfxBtn.TextColor3 = Color3.fromRGB(130, 130, 170); tw(gfxBtn, 0.2, {BackgroundColor3 = Color3.fromRGB(20, 20, 34)})
+    else applyLow(); gfxBtn.Text = "🖥  LOW GFX  [ ON  ]"; gfxBtn.TextColor3 = Color3.fromRGB(60, 220, 120); tw(gfxBtn, 0.2, {BackgroundColor3 = Color3.fromRGB(8, 36, 16)}) end
 end)
 gfxBtn.MouseEnter:Connect(function() tw(gfxBtn, 0.1, {BackgroundColor3 = Color3.fromRGB(32, 32, 48)}) end)
 gfxBtn.MouseLeave:Connect(function() if not gfxOn then tw(gfxBtn, 0.1, {BackgroundColor3 = Color3.fromRGB(20, 20, 34)}) end end)
 
 -- ═══ REJOIN ══════════════════════════════════════════════
-local rjBtn = Instance.new("TextButton", BG)
-rjBtn.Size = UDim2.new(1, -12, 0, 26); rjBtn.Position = UDim2.new(0, 6, 0, 165)
-rjBtn.BackgroundColor3 = Color3.fromRGB(22, 16, 16); rjBtn.BorderSizePixel = 0
-rjBtn.ZIndex = 12; rjBtn.AutoButtonColor = false; rjBtn.Text = "🔄  Rejoin Server"
-rjBtn.Font = Enum.Font.Code; rjBtn.TextSize = 14; rjBtn.TextColor3 = Color3.fromRGB(200, 100, 100)
-Instance.new("UICorner", rjBtn).CornerRadius = UDim.new(0, 6)
-Instance.new("UIStroke", rjBtn).Color = Color3.fromRGB(80, 30, 30)
+local rjBtn = Instance.new("TextButton", BG); rjBtn.Size = UDim2.new(1, -12, 0, 26); rjBtn.Position = UDim2.new(0, 6, 0, 207); rjBtn.BackgroundColor3 = Color3.fromRGB(22, 16, 16); rjBtn.BorderSizePixel = 0; rjBtn.ZIndex = 12; rjBtn.AutoButtonColor = false; rjBtn.Text = "🔄  Rejoin Server"; rjBtn.Font = Enum.Font.Code; rjBtn.TextSize = 14; rjBtn.TextColor3 = Color3.fromRGB(200, 100, 100); Instance.new("UICorner", rjBtn).CornerRadius = UDim.new(0, 6); Instance.new("UIStroke", rjBtn).Color = Color3.fromRGB(80, 30, 30)
 rjBtn.MouseButton1Click:Connect(function() pcall(function() Svc.TS:Teleport(game.PlaceId, LP) end) end)
 rjBtn.MouseEnter:Connect(function() tw(rjBtn, 0.1, {BackgroundColor3 = Color3.fromRGB(40, 20, 20)}) end)
 rjBtn.MouseLeave:Connect(function() tw(rjBtn, 0.1, {BackgroundColor3 = Color3.fromRGB(22, 16, 16)}) end)
 
 -- ═══ STATUS BAR ══════════════════════════════════════════
-local barF = Instance.new("Frame", BG)
-barF.Size = UDim2.new(1, -12, 0, 26); barF.Position = UDim2.new(0, 6, 0, 197)
-barF.BackgroundColor3 = Color3.fromRGB(14, 14, 22); barF.BorderSizePixel = 0; barF.ZIndex = 12
-Instance.new("UICorner", barF).CornerRadius = UDim.new(0, 5)
-local barLbl = Instance.new("TextLabel", barF)
-barLbl.Size = UDim2.new(1, 0, 1, 0); barLbl.BackgroundTransparency = 1
-barLbl.Text = "⏹  IDLE  —  hold [ F ] to spam"
-barLbl.Font = Enum.Font.Code; barLbl.TextSize = 11
-barLbl.TextColor3 = Color3.fromRGB(90, 90, 130); barLbl.ZIndex = 13
+local barF = Instance.new("Frame", BG); barF.Size = UDim2.new(1, -12, 0, 26); barF.Position = UDim2.new(0, 6, 0, 238); barF.BackgroundColor3 = Color3.fromRGB(14, 14, 22); barF.BorderSizePixel = 0; barF.ZIndex = 12; Instance.new("UICorner", barF).CornerRadius = UDim.new(0, 5)
+local barLbl = Instance.new("TextLabel", barF); barLbl.Size = UDim2.new(1, 0, 1, 0); barLbl.BackgroundTransparency = 1; barLbl.Text = "⏹  IDLE"; barLbl.Font = Enum.Font.Code; barLbl.TextSize = 11; barLbl.TextColor3 = Color3.fromRGB(90, 90, 130); barLbl.ZIndex = 13
 
 Svc.RS.Heartbeat:Connect(function()
     pcall(function()
         cpsBox.Text = tostring(realCPS)
         totLbl.Text = "Total: " .. tostring(totalClicks)
         local kn = tostring(hotkey):gsub("Enum.KeyCode.", "")
-        if isOn then
+        if countdown then
+            barLbl.TextColor3 = Color3.fromRGB(255, 220, 0)
+            barF.BackgroundColor3 = Color3.fromRGB(22, 18, 0)
+        elseif isOn then
             barLbl.Text = "▶  RUNNING  (" .. realCPS .. " CPS)"
             barLbl.TextColor3 = Color3.fromRGB(60, 220, 80)
             barF.BackgroundColor3 = Color3.fromRGB(6, 22, 10)
         else
-            barLbl.Text = "⏹  IDLE  —  hold [ " .. kn .. " ] to spam"
+            barLbl.Text = "⏹  IDLE  —  BAŞLAT veya [ " .. kn .. " ] tut"
             barLbl.TextColor3 = Color3.fromRGB(90, 90, 130)
             barF.BackgroundColor3 = Color3.fromRGB(14, 14, 22)
         end
